@@ -90,8 +90,8 @@ salas-vazias-luz-acesa/
 ## 5. Instalação
 
 ```bash
-git clone https://github.com/<usuario>/salas-vazias-luz-acesa.git
-cd salas-vazias-luz-acesa
+git clone https://github.com/GabriielRiva/SalasVaziasLuzAcesa.git
+cd SalasVaziasLuzAcesa
 
 python -m venv .venv
 # Windows:
