@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# modelos baixados automaticamente pelo YOLO
+*.pt
+
+# saídas geradas na execução
+data/eventos.csv
+data/alertas/
+data/resultado_*.jpg
+saida*.mp4
