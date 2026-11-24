@@ -24,11 +24,11 @@ from pathlib import Path
 
 import cv2
 
-from alerta import Registrador
+from alerta import Registrador, energia_kwh
 from brilho import DetectorLuz, calcular_brilho
 from detector import DetectorPessoas
 from estado import MonitorSala
-from visual import desenhar
+from visual import desenhar, desenhar_resumo
 
 EXTENSOES_IMAGEM = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -40,6 +40,18 @@ def ler_roi(texto: str | None):
     if len(partes) != 4:
         raise argparse.ArgumentTypeError("ROI deve ser x,y,largura,altura (ex.: 0,0,640,120)")
     return tuple(partes)
+
+
+JANELA = "Salas vazias com luz acesa"
+
+
+def mostrar(frame, largura: int) -> None:
+    """Exibe o frame numa janela de tamanho fixo (largura em px, proporção mantida)."""
+    h, w = frame.shape[:2]
+    if w != largura:
+        frame = cv2.resize(frame, (largura, max(1, round(h * largura / w))),
+                           interpolation=cv2.INTER_AREA if w > largura else cv2.INTER_LINEAR)
+    cv2.imshow(JANELA, frame)
 
 
 def criar_argumentos() -> argparse.ArgumentParser:
@@ -64,6 +76,8 @@ def criar_argumentos() -> argparse.ArgumentParser:
     p.add_argument("--tarifa", type=float, default=0.80, help="Tarifa de energia em R$/kWh")
     p.add_argument("--saida", default="data", help="Pasta para o CSV e as fotos dos alertas")
     p.add_argument("--salvar-video", default=None, help="Grava o vídeo anotado (ex.: saida.mp4)")
+    p.add_argument("--largura-janela", type=int, default=960,
+                   help="Largura fixa da janela em pixels (padrão: 960); a altura segue a proporção")
     p.add_argument("--sem-janela", action="store_true",
                    help="Não abre janela (útil em servidor / sem monitor)")
     return p
@@ -102,7 +116,7 @@ def processar_imagem(args, detector: DetectorPessoas) -> None:
     cv2.imwrite(str(destino), anotado)
     print(f"Imagem anotada salva em: {destino}")
     if not args.sem_janela:
-        cv2.imshow("Salas vazias com luz acesa", anotado)
+        mostrar(anotado, args.largura_janela)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
@@ -127,12 +141,15 @@ def processar_video(args, detector: DetectorPessoas) -> None:
     inicio = time.monotonic()
     ultimo_tick, fps_medido = inicio, None
     agora = 0.0
+    ultimo_anotado = None
+    terminou = False
 
     print(f"Monitorando '{args.sala}' (fonte: {args.fonte}). Pressione Q para sair.")
     try:
         while True:
             ok, frame = captura.read()
             if not ok:
+                terminou = True
                 break
 
             # Em vídeo gravado, o tempo é a posição no vídeo; ao vivo, o relógio.
@@ -156,6 +173,7 @@ def processar_video(args, detector: DetectorPessoas) -> None:
                                tolerancia=args.tolerancia, qtd_alertas=monitor.qtd_alertas,
                                roi=args.roi, fps=fps_medido)
 
+            ultimo_anotado = anotado
             for evento in eventos:
                 registrador.registrar(evento, anotado)
 
@@ -167,7 +185,7 @@ def processar_video(args, detector: DetectorPessoas) -> None:
                 gravador.write(anotado)
 
             if not args.sem_janela:
-                cv2.imshow("Salas vazias com luz acesa", anotado)
+                mostrar(anotado, args.largura_janela)
                 if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q"), 27):
                     break
             indice += 1
@@ -179,11 +197,21 @@ def processar_video(args, detector: DetectorPessoas) -> None:
         captura.release()
         if gravador is not None:
             gravador.release()
-        if not args.sem_janela:
-            cv2.destroyAllWindows()
 
     print(registrador.resumo(args.sala, monitor.qtd_alertas,
                              monitor.tempo_total_desperdicio_s, agora))
+
+    if not args.sem_janela:
+        # Quando o vídeo acaba sozinho, mantém o resumo na tela até uma tecla ser apertada.
+        if terminou and ultimo_anotado is not None:
+            kwh = energia_kwh(monitor.tempo_total_desperdicio_s, args.potencia)
+            mostrar(desenhar_resumo(ultimo_anotado, sala=args.sala, tempo_monitorado=agora,
+                                    qtd_alertas=monitor.qtd_alertas,
+                                    desperdicio_s=monitor.tempo_total_desperdicio_s,
+                                    kwh=kwh, custo=kwh * args.tarifa,
+                                    potencia_w=args.potencia), args.largura_janela)
+            cv2.waitKey(0)
+        cv2.destroyAllWindows()
     if args.salvar_video:
         print(f"Vídeo anotado salvo em: {args.salvar_video}")
 
